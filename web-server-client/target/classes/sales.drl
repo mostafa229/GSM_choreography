@@ -1,0 +1,116 @@
+import dao.OrderArtifact;
+dialect  "mvel"
+
+declare OrderArtifact
+@role(event)
+//    @expires( 3s )
+end
+rule "order start"
+    dialect "mvel"
+    when
+        $m : OrderArtifact( isOpen("getAndCheck"),getAndCheckedConfirmed==false, order : getOrder() )
+    then
+        System.out.println( "service should be called");
+
+        modify($m){
+        openStage("payment"),
+            getAndCheckedConfirmed=$m.connectToForeignStore()
+        }
+end
+rule  "payment needed"
+    when
+    $m:OrderArtifact(getAndCheckedConfirmed==true,isOpen("payment"))
+    then
+    System.out.println("payment done");
+
+    modify($m){
+        closeStage("payment"),
+        paymentDone=true
+    }
+end
+rule  "buy and transfer to foriegn wherehouse"
+    when
+        $m:OrderArtifact(paymentDone,purchaseDoneAndStored==false,isOpen("buyAndTransfer")==false)
+    then
+        System.out.println("buy and transfer to foriegn wherehouse waiting for status");
+        modify($m){
+        openStage("buyAndTransfer")
+        }
+
+    end
+rule "purchase is in order"
+    when
+        $m:OrderArtifact(isLastStatus("buying"),isOpen("buyAndTransfer"),isOpen("buying")==false)
+    then
+        System.out.println("purchase is in order");
+        modify($m){openStage("buying")}
+    end
+rule "purchase done"
+        when
+            $m:OrderArtifact(isOpen("buying"),isLastStatus("shipping")==true)
+        then
+            System.out.println("purchase done");
+            modify($m){
+            closeStage("buying"),
+            openStage("shipping")
+            }
+        end
+rule "shiping done"
+    when
+        $m:OrderArtifact (isOpen("shipping"),isLastStatus("stored")==true)
+    then
+        System.out.println("shiping done");
+        modify($m){
+            closeStage("buyAndTransfer"),
+            closeStage("shipping"),
+            purchaseDoneAndStored=true,
+            storedDone=true
+        }
+     end
+rule "start selecting transfer type"
+    when
+        $m:OrderArtifact(purchaseDoneAndStored==true,isOpen("transferType")==false)
+    then
+        System.out.println("start selecting transfer type");
+        modify($m){
+            openStage("transferType")
+        }
+    end
+rule  "transfer type should be selected"
+     when
+        $m:OrderArtifact(isOpen("transferType"),optionsGetFromCRM==false)
+     then
+        System.out.println("transfer type should be selected");
+         temp=$m.getTransferOptionFromCrm();
+         modify($m){
+            optionsGetFromCRM=temp
+         }
+     end
+rule "transfer selected"
+    when
+        $m:OrderArtifact(optionsGetFromCRM==true,optionsDeliverd==false)
+    then
+    System.out.println("transfer selected");
+          boolean temp=$m.setTransferOption();
+          modify($m){
+           optionsDeliverd= temp
+          }
+    end
+rule "transfer to iran started"
+    when
+        $m:OrderArtifact(optionsDeliverd==true,transferTypeSelected==false)
+     then
+     System.out.println("transfer to iran started");
+        modify($m){
+        transferTypeSelected=true
+        }
+     end
+rule "delivered to iran"
+    when
+        $m:OrderArtifact(transferTypeSelected==true,operationFinished==false)
+        then
+         System.out.println("delivered to iran");
+         modify($m){
+         operationFinished=true
+         }
+         end
